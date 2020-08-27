@@ -21,6 +21,12 @@ class FeatureGenerator:
         Generate features
         """
 
+        # use cache
+        pickl_f = 'tmp/cache_feat.pickl'
+        if os.path.isfile(pickl_f):
+            self._logger.debug(f"use cache: {pickl_f}")
+            return pd.read_pickle(pickl_f)
+
         # features: MDC rate
         f_list = self._parse_mdc_rate_file(self.filepath_mdc_rate_excel, vervbose)
         colnames = ["notice_no"] + \
@@ -42,51 +48,58 @@ class FeatureGenerator:
         # merge
         feat_df = pd.merge(feat_df, med_area2_df, on="town_no")
 
-        #
-        feat_df['catg_kbn'] = feat_df.groupby('med_area2_no').apply(self._get_posit_within_area2)['catg_kbn']
-        self._logger.debug(feat_df)
+        # add the posit_kbn
+        feat_df['posit_kbn'] = feat_df.groupby('med_area2_no').apply(self._get_posit_within_area2)['posit_kbn']
 
         if vervbose:
             self._logger.debug(feat_df)
 
+        # cache write
+        feat_df.to_pickle(pickl_f)
+
         return feat_df
 
     def _get_posit_within_area2(self, grouped_df):
-        # self._logger.debug(grouped_df)
-        grouped_df['catg_kbn'] = '0'
+        """
+        Would be called by pd.DataFrame.groupby.apply. the second param is pd.DataFrame
+        """
+
+        # self._logger.debug(f"groupby={grouped_df.name}: {len(grouped_df)}")
+        grouped_df['posit_kbn'] = '0'
 
         # category1: notice_no=1x
-        df_catg1 = grouped_df[grouped_df.notice_no.str.startswith('1')]
-        catg1_exists = len(df_catg1) >= 1
-        if len(df_catg1) == 1:
-            grouped_df.loc[grouped_df.index.isin(df_catg1.index), 'catg_kbn'] = '10'
-        elif catg1_exists:
-            grouped_df.loc[grouped_df.index.isin(df_catg1.index), 'catg_kbn'] = '11'
+        df_categ1 = grouped_df[grouped_df.notice_no.str.startswith('1')]
+        categ1_exists = len(df_categ1) >= 1
+        if len(df_categ1) == 1:
+            grouped_df.loc[grouped_df.index.isin(df_categ1.index), 'posit_kbn'] = '10'
+        elif categ1_exists:
+            grouped_df.loc[grouped_df.index.isin(df_categ1.index), 'posit_kbn'] = '11'
 
         # category2: notice_no=2x
-        df_catg2 = grouped_df[grouped_df.notice_no.str.startswith('2')].sort_values(by='dpc_bed_qty', ascending=False)
-        catg2_exists = len(df_catg2) >= 1
-        if catg2_exists:
-            if len(df_catg2) >= 2:
-                grouped_df.loc[grouped_df.index.isin(df_catg2.index), 'catg_kbn'] = '212' if catg1_exists else '202'
+        df_categ2 = grouped_df[grouped_df.notice_no.str.startswith('2')].sort_values(by='dpc_bed_qty', ascending=False)
+        categ2_exists = len(df_categ2) >= 1
+        if categ2_exists:
+            if len(df_categ2) >= 2:
+                grouped_df.loc[grouped_df.index.isin(df_categ2.index), 'posit_kbn'] = '212' if categ1_exists else '202'
             # top1
-            grouped_df.loc[grouped_df.index.isin(df_catg2.head(1).index), 'catg_kbn'] = '211' if catg1_exists else '201'
+            grouped_df.loc[grouped_df.index.isin(df_categ2.head(1).index),
+                           'posit_kbn'] = '211' if categ1_exists else '201'
 
         # category3: notice_no=3x,9x,0x
-        df_catg3 = grouped_df[grouped_df.notice_no.str.match(
+        df_categ3 = grouped_df[grouped_df.notice_no.str.match(
             r'^[^12]{1}\d+$')].sort_values(by='dpc_bed_qty', ascending=False)
-        if len(df_catg3) >= 2:
-            grouped_df.loc[grouped_df.index.isin(df_catg3.index),
-                           'catg_kbn'] = '312' if catg1_exists or catg2_exists else '302'
-            if len(df_catg3) >= 5:
+        if len(df_categ3) >= 2:
+            grouped_df.loc[grouped_df.index.isin(df_categ3.index),
+                           'posit_kbn'] = '312' if categ1_exists or categ2_exists else '302'
+            if len(df_categ3) >= 5:
                 # percentile
-                df_catg3_pct = df_catg3.rank(pct=True, method='min', ascending=False)
-                grouped_df.loc[grouped_df.index.isin(df_catg3_pct[df_catg3_pct['dpc_bed_qty'] > 0.6].index),
-                               'catg_kbn'] = '313' if catg1_exists or catg2_exists else '303'
-        if len(df_catg3) >= 1:
+                df_categ3_pct = df_categ3.rank(pct=True, method='min', ascending=False)
+                grouped_df.loc[grouped_df.index.isin(df_categ3_pct[df_categ3_pct['dpc_bed_qty'] > 0.6].index),
+                               'posit_kbn'] = '313' if categ1_exists or categ2_exists else '303'
+        if len(df_categ3) >= 1:
             # top1
-            grouped_df.loc[grouped_df.index.isin(df_catg3.head(1).index),
-                           'catg_kbn'] = '311' if catg1_exists or catg2_exists else '301'
+            grouped_df.loc[grouped_df.index.isin(df_categ3.head(1).index),
+                           'posit_kbn'] = '311' if categ1_exists or categ2_exists else '301'
 
         return grouped_df
 
@@ -95,6 +108,8 @@ class FeatureGenerator:
         Create pandas.Dataframe from the overview excel file.
         Removed if dpc bed qty is zero.
         """
+
+        self._logger.debug("begin: parse the overview excel")
 
         if not excel_file_path:
             raise Exception(f"filepath of overview is not set.")
@@ -122,6 +137,8 @@ class FeatureGenerator:
         return df
 
     def _parse_mdc_rate_file(self, excel_file_path: str, vervbose: bool = False) -> list:
+
+        self._logger.debug("begin: load MDC rate excel file")
 
         if not excel_file_path:
             raise Exception(f"filepath of MDC rate is not set.")

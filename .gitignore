@@ -112,4 +112,4 @@ $RECYCLE.BIN/
 # vscode
 .vscode/*
 
-tmp_data/
+tmp/
